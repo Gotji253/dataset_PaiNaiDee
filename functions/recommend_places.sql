@@ -1,72 +1,50 @@
-CREATE OR REPLACE FUNCTION recommend_places(user_id_param INT, recommendation_limit INT DEFAULT 5)
+CREATE OR REPLACE FUNCTION get_popular_places(p_limit INT)
 RETURNS TABLE (
     place_id INT,
     name VARCHAR(255),
-    category VARCHAR(100),
-    average_rating NUMERIC
+    description TEXT,
+    address VARCHAR(255),
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(20),
+    website VARCHAR(255),
+    average_rating DECIMAL(3, 2),
+    created_by_user_id INT,
+    created_at TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE,
+    review_count BIGINT
 ) AS $$
 BEGIN
     RETURN QUERY
-    WITH user_favorite_categories AS (
-        -- 1. ค้นหาหมวดหมู่ที่ผู้ใช้ชอบบ่อยที่สุด
-        SELECT
-            p.category,
-            COUNT(p.category) AS category_count
-        FROM
-            Favorite f
-        JOIN
-            Place p ON f.place_id = p.place_id
-        WHERE
-            f.user_id = user_id_param
-        GROUP BY
-            p.category
-        ORDER BY
-            category_count DESC
-        LIMIT 1 -- เอาเฉพาะหมวดหมู่ที่ชอบมากที่สุด (ถ้ามีหลายหมวดหมู่ที่จำนวนเท่ากัน จะสุ่มมา 1)
-    ),
-    places_in_preferred_category AS (
-        -- 2. ดึงสถานที่ในหมวดหมู่ที่ผู้ใช้ชอบ (ถ้ามี)
-        SELECT
-            p.place_id,
-            p.name,
-            p.category
-        FROM
-            Place p
-        WHERE
-            EXISTS (SELECT 1 FROM user_favorite_categories ufc WHERE ufc.category = p.category)
-    ),
-    ranked_places AS (
-        -- 3. คำนวณคะแนนเฉลี่ยและจัดอันดับสถานที่
-        SELECT
-            pic.place_id,
-            pic.name,
-            pic.category,
-            calculate_average_rating(pic.place_id) AS avg_rating_calculated
-        FROM
-            places_in_preferred_category pic
-        WHERE
-            -- กรองสถานที่ที่ผู้ใช้ยังไม่เคยกด Favorite
-            NOT EXISTS (
-                SELECT 1
-                FROM Favorite fav
-                WHERE fav.user_id = user_id_param AND fav.place_id = pic.place_id
-            )
-    )
-    -- 4. เลือกสถานที่แนะนำตามคะแนนเฉลี่ยสูงสุด
     SELECT
-        rp.place_id,
-        rp.name,
-        rp.category,
-        rp.avg_rating_calculated AS average_rating
+        p.place_id,
+        p.name,
+        p.description,
+        p.address,
+        p.latitude,
+        p.longitude,
+        p.contact_email,
+        p.contact_phone,
+        p.website,
+        p.average_rating,
+        p.created_by_user_id,
+        p.created_at,
+        p.updated_at,
+        COUNT(r.review_id) AS review_count
     FROM
-        ranked_places rp
-    WHERE
-        rp.avg_rating_calculated IS NOT NULL -- เอาเฉพาะที่มีการรีวิวแล้ว
+        "Place" p
+    LEFT JOIN
+        "Review" r ON p.place_id = r.place_id
+    GROUP BY
+        p.place_id -- Group by place_id and all other columns of Place due to SQL standards
     ORDER BY
-        average_rating DESC, rp.name ASC -- จัดเรียงตามคะแนนเฉลี่ย, ถ้าเท่ากันเรียงตามชื่อ
-    LIMIT recommendation_limit; -- จำกัดจำนวนผลลัพธ์
-
-    -- กรณีที่ผู้ใช้ยังไม่มี Favorite หรือไม่มีสถานที่แนะนำจาก Favorite category
-    -- อาจจะเพิ่ม Logic สำรอง เช่น แนะนำสถานที่ยอดนิยมโดยรวม หรือสถานที่ใหม่ๆ (ยังไม่ได้ใส่ในเวอร์ชันนี้)
+        p.average_rating DESC,
+        review_count DESC,
+        p.name ASC
+    LIMIT
+        p_limit;
 END;
 $$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION get_popular_places(INT) IS 'Fetches globally popular places, ordered by average rating (desc) and review count (desc), limited by p_limit.';

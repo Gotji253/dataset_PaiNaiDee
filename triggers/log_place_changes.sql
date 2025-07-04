@@ -16,34 +16,35 @@ BEGIN
         v_old_data := to_jsonb(OLD);
         v_new_data := to_jsonb(NEW);
         v_record_pk := OLD.place_id::TEXT;
+        -- If app.current_user_id is not set, try to infer from the record.
+        -- For Place, created_by_user_id is the most relevant field.
+        -- Note: This doesn't capture who made the update if it's not the creator and app.current_user_id isn't set.
         IF v_changed_by_user_id IS NULL THEN
-            -- หาก created_by ไม่ได้ถูก update ให้ใช้ created_by เดิม
-            -- หรือถ้า created_by สามารถเปลี่ยนได้ ให้ใช้ NEW.created_by
-            v_changed_by_user_id := COALESCE(NEW.created_by, OLD.created_by);
+            v_changed_by_user_id := OLD.created_by_user_id;
         END IF;
     ELSIF (TG_OP = 'DELETE') THEN
         v_old_data := to_jsonb(OLD);
         v_new_data := NULL;
         v_record_pk := OLD.place_id::TEXT;
         IF v_changed_by_user_id IS NULL THEN
-            v_changed_by_user_id := OLD.created_by;
+            v_changed_by_user_id := OLD.created_by_user_id;
         END IF;
     ELSIF (TG_OP = 'INSERT') THEN
         v_old_data := NULL;
         v_new_data := to_jsonb(NEW);
         v_record_pk := NEW.place_id::TEXT;
         IF v_changed_by_user_id IS NULL THEN
-            v_changed_by_user_id := NEW.created_by; -- User ที่สร้างสถานที่
+            v_changed_by_user_id := NEW.created_by_user_id;
         END IF;
     END IF;
 
-    INSERT INTO AuditLog (table_name, record_pk, operation_type, old_data, new_data, changed_by)
-    VALUES (TG_TABLE_NAME, v_record_pk, TG_OP, v_old_data, v_new_data, v_changed_by_user_id);
+    INSERT INTO "AuditLog" (table_name, record_pk, operation_type, old_data, new_data, changed_by)
+    VALUES (TG_TABLE_NAME::TEXT, v_record_pk, TG_OP, v_old_data, v_new_data, v_changed_by_user_id);
 
-    RETURN NEW;
+    IF (TG_OP = 'DELETE') THEN
+        RETURN OLD;
+    ELSE
+        RETURN NEW;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER place_audit_trigger
-AFTER INSERT OR UPDATE OR DELETE ON Place
-FOR EACH ROW EXECUTE FUNCTION log_place_changes();

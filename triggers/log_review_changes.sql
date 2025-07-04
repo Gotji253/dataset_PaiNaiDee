@@ -6,9 +6,6 @@ DECLARE
     v_record_pk TEXT;
     v_changed_by_user_id INTEGER;
 BEGIN
-    -- พยายามดึง user_id จาก session variable (ถ้ามีการตั้งค่าจาก application)
-    -- นี่เป็นวิธีหนึ่งที่ app สามารถส่งข้อมูล user ปัจจุบันมาให้ database ได้
-    -- หากไม่สามารถดึงได้ หรือไม่ได้ตั้งค่าไว้ จะเป็น NULL
     BEGIN
         v_changed_by_user_id := current_setting('app.current_user_id', TRUE)::INTEGER;
     EXCEPTION WHEN OTHERS THEN
@@ -19,7 +16,7 @@ BEGIN
         v_old_data := to_jsonb(OLD);
         v_new_data := to_jsonb(NEW);
         v_record_pk := OLD.review_id::TEXT;
-        -- หาก user_id ไม่ได้ถูก update ให้ใช้ user_id เดิมเป็น changed_by
+        -- For Review, user_id is the author.
         IF v_changed_by_user_id IS NULL THEN
             v_changed_by_user_id := OLD.user_id;
         END IF;
@@ -35,18 +32,17 @@ BEGIN
         v_new_data := to_jsonb(NEW);
         v_record_pk := NEW.review_id::TEXT;
         IF v_changed_by_user_id IS NULL THEN
-            v_changed_by_user_id := NEW.user_id; -- User ที่สร้างรีวิว
+            v_changed_by_user_id := NEW.user_id;
         END IF;
     END IF;
 
-    INSERT INTO AuditLog (table_name, record_pk, operation_type, old_data, new_data, changed_by)
-    VALUES (TG_TABLE_NAME, v_record_pk, TG_OP, v_old_data, v_new_data, v_changed_by_user_id);
+    INSERT INTO "AuditLog" (table_name, record_pk, operation_type, old_data, new_data, changed_by)
+    VALUES (TG_TABLE_NAME::TEXT, v_record_pk, TG_OP, v_old_data, v_new_data, v_changed_by_user_id);
 
-    RETURN NEW; -- สำหรับ INSERT/UPDATE, คืนค่า NEW เพื่อให้ operation ดำเนินการต่อ
-               -- สำหรับ DELETE, ค่าที่คืนไม่สำคัญ แต่ต้องคืนค่า record-like
+    IF (TG_OP = 'DELETE') THEN
+        RETURN OLD;
+    ELSE
+        RETURN NEW;
+    END IF;
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE TRIGGER review_audit_trigger
-AFTER INSERT OR UPDATE OR DELETE ON Review
-FOR EACH ROW EXECUTE FUNCTION log_review_changes();
