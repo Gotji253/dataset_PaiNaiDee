@@ -1,0 +1,106 @@
+name: CI/CD Pipeline for dataset_PaiNaiDee
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15 # Or your preferred newer version
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        # Options to ensure the service is healthy before proceeding
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Wait for PostgreSQL to be ready
+      run: |
+        echo "Waiting for PostgreSQL to start..."
+        until pg_isready -h localhost -p 5432 -U $POSTGRES_USER; do
+          sleep 1;
+        done
+        echo "PostgreSQL started!"
+      env:
+        POSTGRES_USER: testuser # Make sure this matches the service env
+
+    - name: Apply database migrations (PLpgSQL scripts)
+      # This is a placeholder. Replace with your actual migration command.
+      # For example, if you have SQL files in a 'migrations' directory:
+      # run: |
+      #   for file in migrations/*.sql; do
+      #     PGPASSWORD=$POSTGRES_PASSWORD psql -h localhost -U $POSTGRES_USER -d $POSTGRES_DB -a -f "$file"
+      #   done
+      run: echo "Placeholder for database migrations. Configure this step if you have SQL scripts."
+      env:
+        POSTGRES_USER: testuser
+        POSTGRES_PASSWORD: testpassword
+        POSTGRES_DB: testdb
+
+    - name: Run Python tests (pytest)
+      # Ensure your tests are configured to use the PostgreSQL service
+      # (e.g., via environment variables for database connection)
+      run: |
+        # Example: pytest
+        # You might need to set environment variables for your tests to connect to the DB
+        # export DATABASE_URL="postgresql://testuser:testpassword@localhost:5432/testdb"
+        echo "Placeholder for running pytest. Configure your test command."
+        # pytest
+      env:
+        POSTGRES_USER: testuser
+        POSTGRES_PASSWORD: testpassword
+        POSTGRES_DB: testdb
+        # Add other environment variables your tests might need
+
+    # Optional: Linter (flake8 or black)
+    # - name: Run linter (flake8)
+    #   run: |
+    #     pip install flake8
+    #     flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+    #     # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+    #     flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    # - name: Run linter (black)
+    #   run: |
+    #     pip install black
+    #     black --check .
+
+  # Placeholder for a future deployment job
+  # deploy:
+  #   needs: test # Ensures tests pass before deploying
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Only run on push to main
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v3
+  #
+  #     - name: Set up cloud CLI or deployment tools
+  #       run: echo "Setting up deployment tools..."
+  #
+  #     - name: Deploy to production/staging
+  #       run: echo "Deploying application..."
