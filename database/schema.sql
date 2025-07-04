@@ -1,16 +1,20 @@
 -- SQL DDL for PaiNaiDee Project (PostgreSQL)
 
--- Drop tables if they exist (optional, for development)
+-- Drop tables if they exist (optional, for development, in correct order)
 DROP TABLE IF EXISTS "Favorite" CASCADE;
+DROP TABLE IF EXISTS "PlaceTag" CASCADE;
+DROP TABLE IF EXISTS "PlaceCategory" CASCADE;
+DROP TABLE IF EXISTS "UserLoginLog" CASCADE;
+DROP TABLE IF EXISTS "Notification" CASCADE;
 DROP TABLE IF EXISTS "Itinerary" CASCADE;
 DROP TABLE IF EXISTS "Booking" CASCADE;
 DROP TABLE IF EXISTS "Image" CASCADE;
 DROP TABLE IF EXISTS "Review" CASCADE;
 DROP TABLE IF EXISTS "Trip" CASCADE;
 DROP TABLE IF EXISTS "Place" CASCADE;
+DROP TABLE IF EXISTS "Tag" CASCADE;
 DROP TABLE IF EXISTS "Category" CASCADE;
 DROP TABLE IF EXISTS "User" CASCADE;
-
 
 -- User Table
 CREATE TABLE "User" (
@@ -29,6 +33,9 @@ CREATE TABLE "User" (
     "social_id" VARCHAR(100),
     CONSTRAINT "unique_social_login" UNIQUE ("social_provider", "social_id")
 );
+CREATE INDEX IF NOT EXISTS idx_user_email ON "User" ("email");
+CREATE INDEX IF NOT EXISTS idx_user_username ON "User" ("username");
+
 
 -- Category Table
 CREATE TABLE "Category" (
@@ -38,6 +45,16 @@ CREATE TABLE "Category" (
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_category_name ON "Category" ("name");
+
+-- Tag Table
+CREATE TABLE "Tag" (
+    "tag_id" SERIAL PRIMARY KEY,
+    "name" VARCHAR(100) UNIQUE NOT NULL,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_tag_name ON "Tag" ("name");
 
 -- Place Table
 CREATE TABLE "Place" (
@@ -47,18 +64,46 @@ CREATE TABLE "Place" (
     "address" VARCHAR(255),
     "latitude" DECIMAL(10, 8),
     "longitude" DECIMAL(11, 8),
-    "category_id" INT,
     "contact_email" VARCHAR(100),
     "contact_phone" VARCHAR(20),
     "website" VARCHAR(255),
-    "average_rating" DECIMAL(3, 2) DEFAULT 0.00,
+    "average_rating" DECIMAL(3, 2) DEFAULT 0.00 NOT NULL,
     "created_by_user_id" INT,
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    "tags" TEXT, -- Can be comma-separated or JSON/JSONB for better querying
-    FOREIGN KEY ("category_id") REFERENCES "Category"("category_id") ON DELETE SET NULL,
     FOREIGN KEY ("created_by_user_id") REFERENCES "User"("user_id") ON DELETE SET NULL
 );
+CREATE INDEX IF NOT EXISTS idx_place_name ON "Place" ("name");
+CREATE INDEX IF NOT EXISTS idx_place_created_by_user_id ON "Place" ("created_by_user_id");
+-- Consider spatial index for latitude, longitude if using PostGIS:
+-- CREATE INDEX idx_place_location ON "Place" USING GIST (ST_MakePoint(longitude, latitude));
+CREATE INDEX IF NOT EXISTS idx_place_latitude ON "Place" ("latitude");
+CREATE INDEX IF NOT EXISTS idx_place_longitude ON "Place" ("longitude");
+
+
+-- PlaceCategory Junction Table
+CREATE TABLE "PlaceCategory" (
+    "place_id" INT NOT NULL,
+    "category_id" INT NOT NULL,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY ("place_id", "category_id"),
+    FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE,
+    FOREIGN KEY ("category_id") REFERENCES "Category"("category_id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_placecategory_place_id ON "PlaceCategory" ("place_id");
+CREATE INDEX IF NOT EXISTS idx_placecategory_category_id ON "PlaceCategory" ("category_id");
+
+-- PlaceTag Junction Table
+CREATE TABLE "PlaceTag" (
+    "place_id" INT NOT NULL,
+    "tag_id" INT NOT NULL,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY ("place_id", "tag_id"),
+    FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE,
+    FOREIGN KEY ("tag_id") REFERENCES "Tag"("tag_id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_placetag_place_id ON "PlaceTag" ("place_id");
+CREATE INDEX IF NOT EXISTS idx_placetag_tag_id ON "PlaceTag" ("tag_id");
 
 -- Trip Table
 CREATE TABLE "Trip" (
@@ -73,6 +118,9 @@ CREATE TABLE "Trip" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY ("user_id") REFERENCES "User"("user_id") ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_trip_user_id ON "Trip" ("user_id");
+CREATE INDEX IF NOT EXISTS idx_trip_start_date ON "Trip" ("start_date");
+CREATE INDEX IF NOT EXISTS idx_trip_end_date ON "Trip" ("end_date");
 
 -- Review Table
 CREATE TABLE "Review" (
@@ -85,8 +133,10 @@ CREATE TABLE "Review" (
     "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY ("user_id") REFERENCES "User"("user_id") ON DELETE CASCADE,
     FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE,
-    UNIQUE ("user_id", "place_id") -- One user can review a place only once
+    UNIQUE ("user_id", "place_id")
 );
+CREATE INDEX IF NOT EXISTS idx_review_user_id ON "Review" ("user_id");
+CREATE INDEX IF NOT EXISTS idx_review_place_id ON "Review" ("place_id");
 
 -- Image Table
 CREATE TABLE "Image" (
@@ -101,6 +151,9 @@ CREATE TABLE "Image" (
     FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE SET NULL,
     FOREIGN KEY ("review_id") REFERENCES "Review"("review_id") ON DELETE SET NULL
 );
+CREATE INDEX IF NOT EXISTS idx_image_uploaded_by_user_id ON "Image" ("uploaded_by_user_id");
+CREATE INDEX IF NOT EXISTS idx_image_place_id ON "Image" ("place_id");
+CREATE INDEX IF NOT EXISTS idx_image_review_id ON "Image" ("review_id");
 
 -- Booking Table
 CREATE TABLE "Booking" (
@@ -109,8 +162,8 @@ CREATE TABLE "Booking" (
     "place_id" INT NOT NULL,
     "trip_id" INT,
     "booking_date" TIMESTAMP WITH TIME ZONE NOT NULL,
-    "number_of_people" INT NOT NULL DEFAULT 1,
-    "status" VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING, CONFIRMED, CANCELLED
+    "number_of_people" INT NOT NULL DEFAULT 1 CHECK ("number_of_people" > 0),
+    "status" VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK ("status" IN ('PENDING', 'CONFIRMED', 'CANCELLED', 'COMPLETED')),
     "notes" TEXT,
     "total_price" DECIMAL(10, 2),
     "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -119,6 +172,11 @@ CREATE TABLE "Booking" (
     FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE,
     FOREIGN KEY ("trip_id") REFERENCES "Trip"("trip_id") ON DELETE SET NULL
 );
+CREATE INDEX IF NOT EXISTS idx_booking_user_id ON "Booking" ("user_id");
+CREATE INDEX IF NOT EXISTS idx_booking_place_id ON "Booking" ("place_id");
+CREATE INDEX IF NOT EXISTS idx_booking_trip_id ON "Booking" ("trip_id");
+CREATE INDEX IF NOT EXISTS idx_booking_booking_date ON "Booking" ("booking_date");
+CREATE INDEX IF NOT EXISTS idx_booking_status ON "Booking" ("status");
 
 -- Itinerary Table
 CREATE TABLE "Itinerary" (
@@ -136,8 +194,10 @@ CREATE TABLE "Itinerary" (
     FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE,
     CONSTRAINT "unique_event_in_trip_day_order" UNIQUE ("trip_id", "day_number", "order_in_day")
 );
+CREATE INDEX IF NOT EXISTS idx_itinerary_trip_id ON "Itinerary" ("trip_id");
+CREATE INDEX IF NOT EXISTS idx_itinerary_place_id ON "Itinerary" ("place_id");
 
--- Favorite Table (Composite Primary Key)
+-- Favorite Table
 CREATE TABLE "Favorite" (
     "user_id" INT NOT NULL,
     "place_id" INT NOT NULL,
@@ -146,6 +206,39 @@ CREATE TABLE "Favorite" (
     FOREIGN KEY ("user_id") REFERENCES "User"("user_id") ON DELETE CASCADE,
     FOREIGN KEY ("place_id") REFERENCES "Place"("place_id") ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_favorite_place_id ON "Favorite" ("place_id"); -- For finding all users who favorited a place
+
+-- UserLoginLog Table
+CREATE TABLE "UserLoginLog" (
+    "log_id" SERIAL PRIMARY KEY,
+    "user_id" INT NOT NULL,
+    "login_timestamp" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    "ip_address" VARCHAR(45),
+    "user_agent" TEXT,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY ("user_id") REFERENCES "User"("user_id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_userloginlog_user_id ON "UserLoginLog" ("user_id");
+CREATE INDEX IF NOT EXISTS idx_userloginlog_login_timestamp ON "UserLoginLog" ("login_timestamp");
+
+-- Notification Table
+CREATE TABLE "Notification" (
+    "notification_id" SERIAL PRIMARY KEY,
+    "user_id" INT NOT NULL,
+    "message" TEXT NOT NULL,
+    "type" VARCHAR(50), -- e.g., 'new_review', 'booking_confirmed', 'system_message'
+    "related_entity_type" VARCHAR(50), -- e.g., 'Review', 'Booking', 'Place', 'User'
+    "related_entity_id" INT,
+    "is_read" BOOLEAN DEFAULT FALSE,
+    "created_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY ("user_id") REFERENCES "User"("user_id") ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_notification_user_id ON "Notification" ("user_id");
+CREATE INDEX IF NOT EXISTS idx_notification_is_read ON "Notification" ("is_read");
+CREATE INDEX IF NOT EXISTS idx_notification_created_at ON "Notification" ("created_at");
+CREATE INDEX IF NOT EXISTS idx_notification_related_entity ON "Notification" ("related_entity_type", "related_entity_id");
+
 
 -- Triggers for updated_at columns (PostgreSQL specific)
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
@@ -164,6 +257,11 @@ EXECUTE FUNCTION trigger_set_timestamp();
 
 CREATE TRIGGER set_timestamp_category
 BEFORE UPDATE ON "Category"
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
+CREATE TRIGGER set_timestamp_tag
+BEFORE UPDATE ON "Tag"
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
@@ -192,13 +290,11 @@ BEFORE UPDATE ON "Itinerary"
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
 
--- Indexes for performance (examples)
-CREATE INDEX idx_place_name ON "Place" ("name");
-CREATE INDEX idx_place_category_id ON "Place" ("category_id");
-CREATE INDEX idx_place_tags ON "Place" USING GIN (to_tsvector('english', "tags")); -- For FTS on tags
-CREATE INDEX idx_review_place_id ON "Review" ("place_id");
-CREATE INDEX idx_itinerary_trip_id ON "Itinerary" ("trip_id");
-CREATE INDEX idx_user_email ON "User" ("email");
+CREATE TRIGGER set_timestamp_notification
+BEFORE UPDATE ON "Notification"
+FOR EACH ROW
+EXECUTE FUNCTION trigger_set_timestamp();
+
 
 -- Trigger for updating Place.average_rating when Review changes
 CREATE OR REPLACE FUNCTION update_place_average_rating()
@@ -230,6 +326,23 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER review_changed_update_place_rating
-AFTER INSERT OR UPDATE OF rating OR DELETE ON "Review" -- Trigger on rating update too
+AFTER INSERT OR UPDATE OF rating OR DELETE ON "Review"
 FOR EACH ROW
 EXECUTE FUNCTION update_place_average_rating();
+
+-- (Optional) Trigger to ensure average_rating is 0.00 for a new Place if no reviews exist
+-- This might be redundant if default is 0.00 and no reviews means AVG is NULL -> COALESCE to 0.00
+-- CREATE OR REPLACE FUNCTION initialize_place_average_rating()
+-- RETURNS TRIGGER AS $$
+-- BEGIN
+--     NEW.average_rating = 0.00;
+--     RETURN NEW;
+-- END;
+-- $$ LANGUAGE plpgsql;
+
+-- CREATE TRIGGER place_inserted_initialize_rating
+-- BEFORE INSERT ON "Place"
+-- FOR EACH ROW
+-- EXECUTE FUNCTION initialize_place_average_rating();
+
+[end of database/schema.sql]
