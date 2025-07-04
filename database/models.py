@@ -320,4 +320,3 @@ class Notification(Base):
 # the database trigger for `updated_at` is more reliable for direct DB modifications.
 # SQLAlchemy's onupdate is triggered when the session flushes changes made through the ORM.
 # The DDL triggers ensure `updated_at` is handled at the DB level for any modification type.
-[end of database/models.py]
