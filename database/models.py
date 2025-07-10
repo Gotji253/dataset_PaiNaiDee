@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text, Boolean, DateTime, Date, Time, ForeignKey, UniqueConstraint, Index, DECIMAL, Table, CheckConstraint
 from sqlalchemy.orm import relationship, declarative_base
 from sqlalchemy.sql import func
+from sqlalchemy.dialects import postgresql # Added for JSONB
 import datetime
 
 Base = declarative_base()
@@ -46,6 +47,7 @@ class User(Base):
         UniqueConstraint('social_provider', 'social_id', name='unique_social_login'),
         Index('idx_user_email_sa', 'email'),
         Index('idx_user_username_sa', 'username'),
+        Index('idx_user_is_verified_sa', 'is_verified'), # New Index
     )
 
     # Relationships
@@ -111,13 +113,20 @@ class Place(Base):
     created_by_user_id = Column(Integer, ForeignKey("User.user_id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    # tags (Text column) removed
+
+    # New fields for Phase 1
+    cover_image_url = Column(String(255), nullable=True)
+    popularity_score = Column(Integer, default=0, nullable=False)
+    opening_hours = Column(postgresql.JSONB(astext_type=Text), nullable=True)
+
 
     __table_args__ = (
         Index('idx_place_name_sa', 'name'),
         Index('idx_place_created_by_user_id_sa', 'created_by_user_id'),
         Index('idx_place_latitude_sa', 'latitude'),
         Index('idx_place_longitude_sa', 'longitude'),
+        Index('idx_place_popularity_score_sa', 'popularity_score'), # New Index
+        Index('idx_place_average_rating_sa', 'average_rating'),   # New Index
     )
 
     # Relationships
@@ -153,6 +162,7 @@ class Trip(Base):
         Index('idx_trip_user_id_sa', 'user_id'),
         Index('idx_trip_start_date_sa', 'start_date'),
         Index('idx_trip_end_date_sa', 'end_date'),
+        Index('idx_trip_is_public_sa', 'is_public'),     # New Index
     )
 
     # Relationships
@@ -176,6 +186,7 @@ class Review(Base):
         CheckConstraint('rating >= 1 AND rating <= 5', name='check_rating_range'),
         Index('idx_review_user_id_sa', 'user_id'),
         Index('idx_review_place_id_sa', 'place_id'),
+        Index('idx_review_rating_sa', 'rating'),         # New Index
     )
 
     # Relationships
@@ -264,16 +275,42 @@ class Favorite(Base):
     __tablename__ = "Favorite"
 
     user_id = Column(Integer, ForeignKey("User.user_id", ondelete="CASCADE"), primary_key=True)
-    place_id = Column(Integer, ForeignKey("Place.place_id", ondelete="CASCADE"), primary_key=True)
+    # favorite_id is now the sole primary key for the ORM model
+    favorite_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("User.user_id", ondelete="CASCADE"), nullable=False)
+    place_id = Column(Integer, ForeignKey("Place.place_id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
-        Index('idx_favorite_place_id_sa', 'place_id'), # Index for querying by place_id
+        UniqueConstraint('user_id', 'place_id', name='uq_user_place_favorite'),
+        Index('idx_favorite_user_id_fk_sa', 'user_id'),
+        Index('idx_favorite_place_id_fk_sa', 'place_id'),
     )
 
-    # Relationships
     user = relationship("User", back_populates="favorite_places_association")
     place = relationship("Place", back_populates="favorited_by_users_association")
+
+# AuditLog class definition (assuming it might not be present or needs update)
+class AuditLog(Base):
+    __tablename__ = "AuditLog"
+
+    log_id = Column(Integer, primary_key=True, autoincrement=True)
+    table_name = Column(Text, nullable=False)
+    record_pk = Column(Text, nullable=False) # Primary key of the audited record.
+    operation_type = Column(String(10), nullable=False) # e.g., INSERT, UPDATE, DELETE
+    old_data = Column(postgresql.JSONB(astext_type=Text), nullable=True)
+    new_data = Column(postgresql.JSONB(astext_type=Text), nullable=True)
+    changed_at = Column(DateTime(timezone=True), server_default=func.now())
+    # ForeignKey to User table for who made the change
+    changed_by = Column(Integer, ForeignKey("User.user_id", ondelete="SET NULL"), nullable=True)
+
+    # Optional: Relationship to User
+    # changed_by_user = relationship("User") # Define how this user relates if needed for ORM queries
+
+    __table_args__ = (
+        Index('idx_auditlog_table_record_pk_sa', 'table_name', 'record_pk'), # Index for searching by table and PK
+        Index('idx_auditlog_changed_by_fk_sa', 'changed_by'),       # Index for the foreign key
+    )
 
 class UserLoginLog(Base):
     __tablename__ = "UserLoginLog"
